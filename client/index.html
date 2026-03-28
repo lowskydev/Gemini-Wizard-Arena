@@ -13,7 +13,16 @@
 </head>
 
 <body>
+    <canvas id="gpu-bg"></canvas>
     <div id="game-container"></div>
+    <script type="importmap">
+        {
+            "imports": {
+                "typegpu": "https://unpkg.com/typegpu@latest/dist/index.js"
+            }
+        }
+    </script>
+    <script type="module" src="bg-shader.js"></script>
     <!-- config.js MUST be first so CONFIG is defined before audio.js reads it -->
     <script src="config.js"></script>
     <script src="audio.js"></script>

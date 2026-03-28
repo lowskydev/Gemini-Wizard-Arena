@@ -41,6 +41,169 @@ const createCircleTexture = (scene, key, radius, color) => {
 
 // ─── Phaser Scene ─────────────────────────────────────────────────────────────
 
+function createSoulsButton(scene, x, y, textStr, onClick) {
+    const btnWidth = 240;
+    const btnHeight = 60;
+    const container = scene.add.container(x, y);
+
+    const bg = scene.add.graphics();
+    const text = scene.add.text(0, 0, textStr, {
+        fontFamily: 'Georgia, serif',
+        fontSize: '24px',
+        color: '#aaaaaa',
+        fontStyle: 'bold',
+        letterSpacing: 2
+    }).setOrigin(0.5);
+
+    container.add([bg, text]);
+
+    const draw = (isHover) => {
+        bg.clear();
+        bg.fillStyle(0x000000, 0.7);
+        bg.fillRect(-btnWidth/2, -btnHeight/2, btnWidth, btnHeight);
+
+        if (isHover) {
+            bg.lineStyle(2, 0xffaa00, 1); // gold
+            text.setColor('#ffffff');
+            text.setShadow(0, 0, '#ffaa00', 8, false, true);
+        } else {
+            bg.lineStyle(1, 0x555555, 0.8);
+            text.setColor('#aaaaaa');
+            text.setShadow(0, 0, '#000000', 0);
+        }
+        bg.strokeRect(-btnWidth/2, -btnHeight/2, btnWidth, btnHeight);
+    };
+
+    draw(false);
+
+    const zone = scene.add.zone(0, 0, btnWidth, btnHeight).setInteractive({ cursor: 'pointer' });
+    container.add(zone);
+
+    zone.on('pointerover', () => { draw(true); container.setScale(1.05); });
+    zone.on('pointerout', () => { draw(false); container.setScale(1); });
+    zone.on('pointerdown', onClick);
+
+    return container;
+}
+
+class MainMenuScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'MainMenuScene' });
+        this.timeElapsed = 0;
+    }
+
+    create() {
+        const { width, height } = this.scale;
+
+        // Vignette-like overlay
+        const vignette = this.add.graphics();
+        vignette.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.0, 0.0, 0.8, 0.8);
+        vignette.fillRect(0, 0, width, height);
+
+        // Title: Vibe-Wizard Arena
+        this.title = this.add.text(width / 2, height * 0.25, 'Vibe-Wizard Arena', {
+            fontFamily: 'Georgia, serif',
+            fontSize: '80px',
+            color: '#ffffff',
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+        this.title.setShadow(2, 4, '#000000', 10, false, true);
+
+        // Simple elegant line separator
+        const line = this.add.graphics();
+        line.lineStyle(2, 0x550000, 0.8);
+        line.beginPath();
+        line.moveTo(width / 2 - 200, height * 0.35);
+        line.lineTo(width / 2 + 200, height * 0.35);
+        line.strokePath();
+
+        // Lobby UI Box
+        const lobbyBox = this.add.graphics();
+        lobbyBox.fillStyle(0x000000, 0.5);
+        lobbyBox.lineStyle(1, 0x333333, 1);
+        lobbyBox.fillRect(width / 2 - 250, height * 0.4, 500, 250);
+        lobbyBox.strokeRect(width / 2 - 250, height * 0.4, 500, 250);
+
+        this.add.text(width / 2, height * 0.48, 'LAN LOBBY', {
+            fontFamily: 'Georgia, serif',
+            fontSize: '28px',
+            color: '#cccccc',
+            letterSpacing: 4
+        }).setOrigin(0.5);
+
+        this.add.text(width / 2, height * 0.55, 'Player 1: Connected', {
+            fontFamily: 'Georgia, serif',
+            fontSize: '24px',
+            color: '#ff4444' // red
+        }).setOrigin(0.5);
+
+        this.add.text(width / 2, height * 0.62, 'Player 2: Waiting...', {
+            fontFamily: 'Georgia, serif',
+            fontSize: '24px',
+            color: '#555555' 
+        }).setOrigin(0.5);
+
+        // Ready Button -> goes to EndScene for testing
+        createSoulsButton(this, width / 2, height * 0.8, 'READY', () => {
+            this.scene.start('EndScene');
+        });
+    }
+
+    update(time, delta) {
+        this.timeElapsed += delta;
+        // Slow pulsing effect for title
+        const scale = 1 + Math.sin(this.timeElapsed * 0.0015) * 0.02;
+        this.title.setScale(scale);
+        this.title.setAlpha(0.8 + Math.sin(this.timeElapsed * 0.002) * 0.2);
+    }
+}
+
+class EndScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'EndScene' });
+        this.timeElapsed = 0;
+    }
+
+    create() {
+        const { width, height } = this.scale;
+        
+        // Dark red overlay
+        this.add.rectangle(0, 0, width, height, 0x440000, 0.4).setOrigin(0);
+
+        this.deathText = this.add.text(width / 2, height * 0.4, 'YOU DIED', {
+            fontFamily: 'Georgia, serif',
+            fontSize: '140px',
+            color: '#ff0000',
+            fontStyle: 'bold',
+            letterSpacing: 25
+        }).setOrigin(0.5).setShadow(0, 0, '#000000', 20, false, true);
+        
+        this.deathText.setAlpha(0);
+        this.add.tween({
+            targets: this.deathText,
+            alpha: 1,
+            scale: { from: 0.9, to: 1 },
+            duration: 3000,
+            ease: 'Sine.easeOut'
+        });
+
+        // Add buttons below
+        createSoulsButton(this, width / 2 - 150, height * 0.7, 'Go To Lobby', () => {
+            this.scene.start('MainMenuScene');
+        });
+
+        createSoulsButton(this, width / 2 + 150, height * 0.7, 'Restart', () => {
+            // TODO: implement restart later
+            console.log('Restart pressed, to be implemented');
+        });
+    }
+
+    update(time, delta) {
+        this.timeElapsed += delta;
+        // Keep the death text slowly pulsating slightly
+        this.deathText.setScale(1 + Math.sin(this.timeElapsed * 0.001) * 0.02);
+    }
+}
 class GameScene extends Phaser.Scene {
     constructor() {
         super({ key: 'GameScene' });
@@ -190,7 +353,7 @@ const config = {
     width: window.innerWidth,
     height: window.innerHeight,
     parent: 'game-container',
-    backgroundColor: '#1a1a2e',
+    transparent: true,
     scale: {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -202,7 +365,7 @@ const config = {
             debug: false,
         },
     },
-    scene: [GameScene],
+    scene: [MainMenuScene, GameScene, EndScene],
 };
 
 const game = new Phaser.Game(config);
