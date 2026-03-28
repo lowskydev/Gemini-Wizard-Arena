@@ -25,22 +25,25 @@ const PLAYER_SPEED_CASTING = 0.5;  // Movement multiplier while holding SHIFT
 const API_KEY = CONFIG.GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
 
-const SYSTEM_PROMPT = `Listen to the audio. The user is trying to cast a spell in a wizard game by saying one of exactly 5 valid spell names.
+const SYSTEM_PROMPT = `Listen to the audio and transcribe exactly what the user said.
 
-The ONLY valid spell names are: "fireball", "frostbite", "bolt", "nova", "surprise".
-Partial words, similar words, or anything else does NOT count as a valid spell.
+The ONLY valid spell names are these 5 English words: "fireball", "frostbite", "bolt", "nova", "surprise".
+
+First, transcribe what you heard. Then compare it strictly to the 5 valid spell names.
 
 Return ONLY a valid JSON object matching this schema:
 {
+  "heard": string,
   "spell": "fireball" | "frostbite" | "bolt" | "nova" | "surprise",
   "clarity": number (0-100),
   "backfire": boolean
 }
 
 Rules:
-- "spell" -> the spell the user said. If the word does not exactly match one of the 5 valid names, set backfire to true and pick the closest spell only as a formality.
-- "clarity" -> how closely the spoken word matched a valid spell name (0 = nothing recognizable, 100 = said the full spell name perfectly). Saying only part of a spell name (e.g. "fire" instead of "fireball") should score below 40. Saying a random word that is not a spell should score below 20.
-- "backfire" -> true if: the user said a partial spell name (e.g. "fire", "ball", "frost"), said something that is not a spell name at all, was mumbling or stuttering, or was inaudible. Only set backfire to false if the user clearly said one of the 5 exact spell names.
+- "heard" -> write out exactly what word or words you heard, in whatever language.
+- "spell" -> only if "heard" exactly matches one of the 5 valid spell names (case-insensitive). Otherwise pick the closest one as a formality — it does not matter since backfire will be true.
+- "clarity" -> how closely "heard" matches one of the 5 exact valid spell names. If "heard" is not one of the 5 spell names, clarity must be below 25, no exceptions. If "heard" is a different language word, clarity must be below 10.
+- "backfire" -> true if "heard" is anything other than one of the 5 exact spell names. This includes: words in other languages, partial spell names, random English words, mumbling, silence, or anything else. backfire is ONLY false when the user said one of the 5 exact spell names clearly.
 
 Do not wrap the output in markdown code blocks.`;
 
@@ -171,6 +174,7 @@ async function sendAudioToGemini(audioBlob, volume) {
     };
 
     console.log('-----------------------------------------');
+    console.log(' heard:   ', parsed.heard);
     console.log(' spell:   ', result.spell);
     console.log(' clarity: ', result.clarity, '/ 100');
     console.log(' volume:  ', result.volume, '/ 100');
