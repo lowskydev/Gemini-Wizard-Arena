@@ -1,41 +1,46 @@
 // client/spells.js — SpellCaster
 // Owns: textures, casting, hit effects, debuffs, remote spell rendering.
-// GameScene calls sc.init(scene) once, then sc.cast(result) / sc.onRemoteSpell(data).
+// All 4 spells are long-range projectiles with distinct behaviours.
+// GameScene calls sc.init(scene) once, then sc.cast() / sc.onRemoteSpell().
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SpellCaster {
 
-    // ── Config ─────────────────────────────────────────────────────────────────
-
-    static SPELLS = {
-        fireball: { color: 0xff8800, radius: 10, speed: 450, damage: 10, gravity: false },
-        frostbite: { color: 0x44ddff, radius: 10, speed: 420, damage: 8, gravity: true },
-        bolt: { color: 0xffee22, radius: 6, speed: 900, damage: 5, gravity: false },
-        nova: { color: 0xbb44ff, radius: 10, speed: 0, damage: 8, gravity: false },
-    };
+    constructor() {
+        this.scene = null;
+        this.balls = null;
+        this._fancyTextures = {};  // Track which spells have WebGPU textures
+    }
 
     // ── Init ───────────────────────────────────────────────────────────────────
 
     init(scene, ballGroup) {
         this.scene = scene;
-        this.balls = ballGroup; // Phaser physics group owned by GameScene
-        this._buildTextures();
+        this.balls = ballGroup;
+        this._buildFallbackTextures();
     }
 
-    _buildTextures() {
-        Object.entries(SpellCaster.SPELLS).forEach(([key, { color, radius }]) => {
-            createCircleTexture(this.scene, `spell_${key}`, radius, color); // eslint-disable-line no-undef
+    /** Simple circle fallback textures for every spell */
+    _buildFallbackTextures() {
+        const spells = window.SPELL_CONFIG?.SPELLS ?? {};
+        Object.entries(spells).forEach(([key, cfg]) => {
+            createCircleTexture(this.scene, `spell_${key}`, cfg.radius, cfg.color); // eslint-disable-line no-undef
         });
+    }
+
+    /** Register a WebGPU-generated spritesheet for a spell */
+    registerFancyTexture(spellKey) {
+        this._fancyTextures[spellKey] = true;
     }
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
     /**
-     * Cast a spell for the local player based on a Gemini result object.
+     * Cast a spell locally based on a Gemini result object.
      * @param {{ spell, volume, backfire }} result
-     * @param {Phaser.GameObjects.Sprite} caster   — myPlayer
-     * @param {Phaser.GameObjects.Sprite} target   — otherPlayer
-     * @param {{ worldX, worldY }}        pointer  — current mouse position
+     * @param {Phaser.GameObjects.Sprite} caster
+     * @param {Phaser.GameObjects.Sprite} target
+     * @param {{ worldX, worldY }}        pointer
      */
     cast(result, caster, target, pointer) {
         try {
@@ -52,51 +57,44 @@ class SpellCaster {
 
             this._playCastAnim(caster);
 
-            switch (result.spell) {
-                case 'fireball': return this._launchBall(caster, 'fireball', scale, targetX, targetY);
-                case 'frostbite': return this._launchBall(caster, 'frostbite', scale, targetX, targetY - 180);
-                case 'bolt': return this._launchBall(caster, 'bolt', scale * 0.6, targetX, targetY);
-                case 'nova': return this._castNova(caster, target, scale);
-                default:
-                    console.warn('[SpellCaster]: Unknown spell:', result.spell);
-                    return this._launchBall(caster, 'fireball', scale, targetX, targetY);
-            }
+            // ALL spells are directional projectiles aimed at the cursor
+            this._launchProjectile(caster, result.spell, scale, targetX, targetY);
+
+            // Clear state → IDLE
+            window.dispatchEvent(new CustomEvent('castStateChange', {
+                detail: { state: CastState.IDLE }
+            }));
+
         } catch (err) {
             console.error('[SpellCaster.cast Error]:', err);
         }
     }
 
     /**
-     * Render and apply a spell received over the network.
-     * @param {object} data — BROADCAST_SPELL payload
-     * @param {Phaser.GameObjects.Sprite} remoteCaster — otherPlayer reference
-     * @param {Phaser.GameObjects.Sprite} localPlayer  — myPlayer reference
+     * Render a spell received over the network.
      */
     onRemoteSpell(data, remoteCaster, localPlayer) {
         try {
             const { spell: spellType, x, y, targetX, targetY, scale = 1.0 } = data;
 
-            if (spellType === 'nova') {
-                this._spawnNovaRing(x, y, 220 * scale);
-                this._applyNovaHit(x, y, 220 * scale, scale, localPlayer);
-                return;
-            }
-
             const fb = this._getFreshBall(x, y, spellType, scale);
             if (!fb) return;
             fb.owner = remoteCaster;
-            fb.body.allowGravity = SpellCaster.SPELLS[spellType]?.gravity ?? false;
 
-            const speed = spellType === 'bolt' ? 900 : 450;
-            this._aim(fb, x, y, targetX, targetY, speed);
+            const cfg = this._getConfig(spellType);
+            fb.body.allowGravity = cfg.gravity ?? false;
+            this._aim(fb, x, y, targetX, targetY, cfg.speed);
+
+            // Auto-destroy after lifetime
+            this.scene.time.delayedCall(cfg.lifetime, () => this._destroyBall(fb));
         } catch (err) {
             console.error('[SpellCaster.onRemoteSpell Error]:', err);
         }
     }
 
     /**
-     * Process a collision between a ball and a player.
-     * Returns the damage dealt (0 if no hit registered).
+     * Process collision between a projectile and a player.
+     * Returns damage dealt (0 = no hit).
      */
     onHit(ball, player, myPlayer) {
         try {
@@ -106,13 +104,14 @@ class SpellCaster {
             const scale = ball.scaleX || 1.0;
             this._destroyBall(ball);
 
-            const cfg = SpellCaster.SPELLS[spellType] ?? SpellCaster.SPELLS.fireball;
+            const cfg = this._getConfig(spellType);
             const dmg = Math.round(cfg.damage * scale);
 
-            // Visual + debuffs (client-side feel)
-            this.spawnExplosion(player.x, player.y, cfg.color);
-            if (spellType === 'frostbite') this._applySlow(player, scale);
-            if (spellType === 'fireball') this._applyBurnVfx(player, scale);
+            // VFX explosion
+            this._spawnExplosion(player.x, player.y, cfg.color, spellType);
+
+            // Apply debuff
+            this._applyDebuff(player, spellType, cfg, scale);
 
             const tag = player === myPlayer ? 'I was hit' : 'Hit opponent';
             console.log(`[Hit]: ${tag} with ${spellType}, dmg=${dmg}`);
@@ -124,50 +123,51 @@ class SpellCaster {
         }
     }
 
-    // ── Spell implementations ─────────────────────────────────────────────────
+    // ── Projectile launch ─────────────────────────────────────────────────────
+
+    _launchProjectile(caster, spellType, scale, targetX, targetY) {
+        const cfg = this._getConfig(spellType);
+
+        const fb = this._getFreshBall(caster.x, caster.y, spellType, scale);
+        if (!fb) return;
+
+        fb.owner = caster;
+        fb.body.allowGravity = cfg.gravity ?? false;
+
+        this._aim(fb, caster.x, caster.y, targetX, targetY, cfg.speed);
+
+        // Auto-destroy after lifetime
+        this.scene.time.delayedCall(cfg.lifetime, () => this._destroyBall(fb));
+    }
 
     _handleBackfire(caster) {
         console.log('[SpellCaster]: BACKFIRE!');
-        this.spawnExplosion(caster.x, caster.y, 0xff0000);
+        this._spawnExplosion(caster.x, caster.y, 0xff0000, 'backfire');
         this._playCastAnim(caster);
-        // Caller (GameScene) handles HP deduction via server
-        return -15; // signal: self-damage
-    }
 
-    _launchBall(caster, spellType, scale, targetX, targetY) {
-        const fb = this._getFreshBall(caster.x, caster.y, spellType, scale);
-        if (!fb) return;
-        fb.owner = caster;
-        fb.body.allowGravity = SpellCaster.SPELLS[spellType]?.gravity ?? false;
-        this._aim(fb, caster.x, caster.y, targetX, targetY,
-            SpellCaster.SPELLS[spellType]?.speed ?? 450);
-    }
+        window.dispatchEvent(new CustomEvent('castStateChange', {
+            detail: { state: CastState.IDLE }
+        }));
 
-    _castNova(caster, target, scale) {
-        const radius = 220 * scale;
-        this._spawnNovaRing(caster.x, caster.y, radius);
-        this._applyNovaHit(caster.x, caster.y, radius, scale, target);
-    }
-
-    _applyNovaHit(ox, oy, radius, scale, hitTarget) {
-        if (!hitTarget?.active) return;
-        const dist = Phaser.Math.Distance.Between(ox, oy, hitTarget.x, hitTarget.y); // eslint-disable-line no-undef
-        if (dist >= radius) return;
-
-        const angle = Math.atan2(hitTarget.y - oy, hitTarget.x - ox);
-        hitTarget.setVelocity(
-            Math.cos(angle) * 700 * scale,
-            Math.sin(angle) * 700 * scale - 200
-        );
-        console.log(`[Nova]: In-range hit at dist ${Math.round(dist)}px`);
-        // Damage is resolved server-side via SPELL_CAST event
+        return -15; // signal self-damage
     }
 
     // ── Pool & physics helpers ────────────────────────────────────────────────
 
+    _getConfig(spellType) {
+        return window.SPELL_CONFIG?.SPELLS?.[spellType] ?? window.SPELL_CONFIG?.SPELLS?.fireball ?? {
+            color: 0xff8800, radius: 10, speed: 500, damage: 10,
+            gravity: false, lifetime: 4000,
+        };
+    }
+
     _getFreshBall(x, y, spellType, scale) {
-        const key = `spell_${spellType}`;
-        const fb = this.balls.get(x, y, this.scene.textures.exists(key) ? key : 'spell_fireball');
+        const fallbackKey = `spell_${spellType}`;
+        const fancyKey = `spell_${spellType}_fancy`;
+        const hasFancy = this._fancyTextures[spellType] && this.scene.textures.exists(fancyKey);
+        const texKey = hasFancy ? fancyKey : (this.scene.textures.exists(fallbackKey) ? fallbackKey : 'spell_fireball');
+
+        const fb = this.balls.get(x, y, texKey);
         if (!fb) { console.warn('[SpellCaster]: Ball pool exhausted.'); return null; }
 
         fb.enableBody(true, x, y, true, true);
@@ -176,11 +176,13 @@ class SpellCaster {
         fb.body.onWorldBounds = true;
         fb.spellType = spellType;
 
-        if (spellType === 'fireball' && this.scene.textures.exists('fireball_fancy')) {
-            fb.setTexture('fireball_fancy');
-            fb.play('fireball-fancy', true);
+        // Play animated spritesheet if available
+        const animKey = `${spellType}-fancy`;
+        if (hasFancy && this.scene.anims.exists(animKey)) {
+            fb.setTexture(fancyKey);
+            fb.play(animKey, true);
         } else {
-            fb.setTexture(key);
+            fb.setTexture(texKey);
         }
 
         return fb;
@@ -194,36 +196,53 @@ class SpellCaster {
     }
 
     _destroyBall(fb) {
-        if (!fb.active) return;
+        if (!fb?.active) return;
         fb.disableBody(true, true);
         fb.setPosition(-9999, -9999);
     }
 
     // ── Debuffs ───────────────────────────────────────────────────────────────
 
-    _applySlow(player, scale) {
+    _applyDebuff(player, spellType, cfg, scale) {
+        if (!cfg.debuff) return;
+
+        switch (cfg.debuff) {
+            case 'burn':
+                this._applyBurn(player, cfg.debuffDuration);
+                break;
+            case 'slow':
+                this._applySlow(player, cfg.debuffDuration);
+                break;
+            case 'knockback':
+                this._applyKnockback(player, cfg.knockbackForce ?? 700, scale);
+                break;
+        }
+    }
+
+    _applySlow(player, duration) {
         if (player.activeDebuffs?.slow) return;
         player.activeDebuffs = player.activeDebuffs || {};
         player.activeDebuffs.slow = true;
         player.setTint(0x44ddff);
-        this.scene.time.delayedCall(2500, () => {
+        this.scene.time.delayedCall(duration, () => {
             if (player.activeDebuffs) player.activeDebuffs.slow = false;
             player.clearTint();
         });
     }
 
-    _applyBurnVfx(player, scale) {
+    _applyBurn(player, duration) {
         if (player.activeDebuffs?.burn) return;
         player.activeDebuffs = player.activeDebuffs || {};
         player.activeDebuffs.burn = true;
         let ticks = 0;
+        const maxTicks = Math.ceil(duration / 1000);
         const ev = this.scene.time.addEvent({
             delay: 1000,
-            repeat: 2,
+            repeat: maxTicks - 1,
             callback: () => {
                 ticks++;
-                this.spawnExplosion(player.x, player.y, 0xff4400);
-                if (ticks >= 3) {
+                this._spawnExplosion(player.x, player.y, 0xff4400, 'burn');
+                if (ticks >= maxTicks) {
                     if (player.activeDebuffs) player.activeDebuffs.burn = false;
                     ev.remove();
                 }
@@ -231,46 +250,44 @@ class SpellCaster {
         });
     }
 
+    _applyKnockback(player, force, scale) {
+        if (!player?.active) return;
+        // Push away from impact — use the player's facing as a rough proxy
+        const dir = player.flipX ? 1 : -1;
+        player.setVelocity(dir * force * scale, -300 * scale);
+    }
+
     // ── VFX ───────────────────────────────────────────────────────────────────
 
-    spawnExplosion(x, y, color = 0xff8800) {
+    _spawnExplosion(x, y, color = 0xff8800, type = 'default') {
         try {
+            const size = type === 'nova' ? 60 : 40;
             const circle = this.scene.add.graphics();
             circle.fillStyle(color, 0.85);
-            circle.fillCircle(0, 0, 40);
+            circle.fillCircle(0, 0, size);
             circle.setPosition(x, y);
             this.scene.add.tween({
                 targets: circle,
-                alpha: 0, scaleX: 3, scaleY: 3,
-                duration: 400, ease: 'Power2',
+                alpha: 0, scaleX: 2.5, scaleY: 2.5,
+                duration: 450, ease: 'Power2',
                 onComplete: () => circle.destroy(),
             });
-        } catch (err) {
-            console.error('[spawnExplosion Error]:', err);
-        }
-    }
 
-    _spawnNovaRing(x, y, radius) {
-        try {
-            const ring = this.scene.add.graphics();
-            ring.lineStyle(4, 0xbb44ff, 1);
-            ring.strokeCircle(0, 0, 10);
-            ring.setPosition(x, y);
-            this.scene.add.tween({
-                targets: ring,
-                scaleX: radius / 10, scaleY: radius / 10, alpha: 0,
-                duration: 500, ease: 'Power2',
-                onComplete: () => ring.destroy(),
-            });
-
-            const flash = this.scene.add.graphics();
-            flash.fillStyle(0xbb44ff, 0.25).fillCircle(x, y, radius);
-            this.scene.add.tween({
-                targets: flash, alpha: 0, duration: 300, ease: 'Power2',
-                onComplete: (tw, targets) => targets[0].destroy(),
-            });
+            // Secondary ring for nova
+            if (type === 'nova' || type === 'knockback') {
+                const ring = this.scene.add.graphics();
+                ring.lineStyle(3, 0xbb44ff, 0.9);
+                ring.strokeCircle(0, 0, 15);
+                ring.setPosition(x, y);
+                this.scene.add.tween({
+                    targets: ring,
+                    scaleX: 8, scaleY: 8, alpha: 0,
+                    duration: 600, ease: 'Power2',
+                    onComplete: () => ring.destroy(),
+                });
+            }
         } catch (err) {
-            console.error('[_spawnNovaRing Error]:', err);
+            console.error('[_spawnExplosion Error]:', err);
         }
     }
 
@@ -286,5 +303,5 @@ class SpellCaster {
     }
 }
 
-// Singleton — GameScene reads window.spellCaster
+// Singleton
 window.spellCaster = new SpellCaster();

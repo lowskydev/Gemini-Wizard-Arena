@@ -42,6 +42,7 @@ socket.on('connect_error', (err) => {
 
 // ── Audio → Game bridge ────────────────────────────────────────────────────
 // audio.js calls window.castSpellFromAudio(result) after Gemini responds.
+// GameScene.prepareSpell stores it; user clicks to fire.
 
 window.castSpellFromAudio = (result) => {
     if (!gameSceneRef) {

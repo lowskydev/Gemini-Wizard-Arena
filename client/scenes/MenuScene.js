@@ -6,7 +6,6 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         super({ key: 'MenuScene' });
     }
 
-    // ── preload ───────────────────────────────────────────────────────────────
     preload() {
         this.load.image('bg1', 'assets/parallax_mountain_pack/layers/parallax-mountain-bg.png');
         this.load.image('bg2', 'assets/parallax_mountain_pack/layers/parallax-mountain-montain-far.png');
@@ -14,15 +13,12 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         this.load.image('bg4', 'assets/parallax_mountain_pack/layers/parallax-mountain-trees.png');
         this.load.image('bg5', 'assets/parallax_mountain_pack/layers/parallax-mountain-foreground-trees.png');
         this.load.spritesheet('rogue', 'assets/rogue spritesheet calciumtrice.png', {
-            frameWidth: 32,
-            frameHeight: 32,
+            frameWidth: 32, frameHeight: 32,
         });
     }
 
-    // ── create ────────────────────────────────────────────────────────────────
     create() {
         const { width, height } = this.scale;
-
         this._buildBackground(width, height);
         this._buildTitle(width, height);
         this._buildArenaCards(width, height);
@@ -30,16 +26,12 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         this._buildDecorativeRogues(width, height);
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
     _buildBackground(width, height) {
         ['bg1', 'bg2', 'bg3', 'bg4', 'bg5'].forEach((key, i) => {
             this.add.image(width / 2, height / 2, key)
                 .setDisplaySize(width, height)
                 .setDepth(-5 + i);
         });
-
-        // Dark overlay for text readability
         const ov = this.add.graphics().setDepth(0);
         ov.fillGradientStyle(0x000000, 0x000000, 0x000000, 0x000000, 0.0, 0.0, 0.65, 0.65);
         ov.fillRect(0, 0, width, height);
@@ -69,7 +61,6 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         const cardH = height * 0.44;
         const cardY = height * 0.53;
         const gap = width * 0.05;
-
         this._buildArenaCard('ruins', width / 2 - cardW / 2 - gap / 2, cardY, cardW, cardH);
         this._buildArenaCard('crypt', width / 2 + cardW / 2 + gap / 2, cardY, cardW, cardH);
     }
@@ -77,7 +68,7 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
     _buildControlsHint(width, height) {
         this.add.text(
             width / 2, height * 0.94,
-            'WASD / SPACE to move  ·  Click to cast fireball',
+            'WASD / SPACE to move  ·  SHIFT to cast  ·  Click to fire',
             {
                 fontSize: `${Math.round(width * 0.016)}px`,
                 fontFamily: '"Courier New", monospace',
@@ -89,33 +80,28 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
     }
 
     _buildDecorativeRogues(width, height) {
-        // Guard against re-creating animations when scene restarts
         if (!this.anims.exists('menu-idle')) {
             this.anims.create({
                 key: 'menu-idle',
                 frames: this.anims.generateFrameNumbers('rogue', { start: 0, end: 9 }),
-                frameRate: 10,
-                repeat: -1,
+                frameRate: 10, repeat: -1,
             });
         }
         if (!this.anims.exists('menu-run')) {
             this.anims.create({
                 key: 'menu-run',
                 frames: this.anims.generateFrameNumbers('rogue', { start: 20, end: 29 }),
-                frameRate: 15,
-                repeat: -1,
+                frameRate: 15, repeat: -1,
             });
         }
-
         this.add.sprite(width * 0.08, height * 0.14, 'rogue')
             .setScale(3.5).setDepth(2).play('menu-idle');
-
         this.add.sprite(width * 0.92, height * 0.14, 'rogue')
             .setScale(3.5).setFlipX(true).setDepth(2).play('menu-idle');
     }
 
     _buildArenaCard(arenaKey, cx, cy, cardW, cardH) {
-        const arena = window.ARENAS[arenaKey];  // eslint-disable-line no-undef
+        const arena = window.ARENAS[arenaKey];
         const isRuins = arenaKey === 'ruins';
         const accentCol = isRuins ? 0xf5d87a : 0x9060d0;
         const accentHex = isRuins ? '#f5d87a' : '#b080f0';
@@ -124,17 +110,13 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         const x0 = cx - cardW / 2;
         const y0 = cy - cardH / 2;
 
-        // ── Card background ──────────────────────────────────────────────────
         const cardBg = this.add.graphics().setDepth(4);
-
         const drawCard = (shade, borderAlpha = 0.9) => {
             cardBg.clear();
             cardBg.fillStyle(shade, 0.9);
             cardBg.fillRect(x0, y0, cardW, cardH);
             cardBg.lineStyle(3, accentCol, borderAlpha);
             cardBg.strokeRect(x0, y0, cardW, cardH);
-
-            // Corner accents
             const cs = 12;
             cardBg.lineStyle(5, accentCol, 1);
             [[x0, y0], [x0 + cardW, y0], [x0, y0 + cardH], [x0 + cardW, y0 + cardH]]
@@ -146,39 +128,27 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
                     cardBg.strokePath();
                 });
         };
-
         drawCard(bgBase);
 
-        // ── Arena name ───────────────────────────────────────────────────────
         this.add.text(cx, y0 + cardH * 0.1, arena.name.toUpperCase(), {
             fontSize: `${Math.round(cardW * 0.085)}px`,
             fontFamily: '"Courier New", monospace',
-            color: accentHex,
-            stroke: '#1a0030',
-            strokeThickness: 4,
+            color: accentHex, stroke: '#1a0030', strokeThickness: 4,
         }).setOrigin(0.5).setDepth(5);
 
-        // ── Mini preview ─────────────────────────────────────────────────────
         this._buildCardPreview(isRuins, cx, cy, cardW, cardH, x0, y0);
 
-        // ── Description ──────────────────────────────────────────────────────
         this.add.text(cx, y0 + cardH * 0.65, `"${arena.description}"`, {
             fontSize: `${Math.round(cardW * 0.072)}px`,
             fontFamily: '"Courier New", monospace',
-            color: '#a090b8',
-            stroke: '#1a0030',
-            strokeThickness: 3,
-            wordWrap: { width: cardW * 0.85 },
-            align: 'center',
+            color: '#a090b8', stroke: '#1a0030', strokeThickness: 3,
+            wordWrap: { width: cardW * 0.85 }, align: 'center',
         }).setOrigin(0.5).setDepth(5);
 
-        // ── SELECT button ────────────────────────────────────────────────────
         const btnText = this.add.text(cx, y0 + cardH * 0.85, 'SELECT', {
             fontSize: `${Math.round(cardW * 0.055)}px`,
             fontFamily: '"Courier New", monospace',
-            color: accentHex,
-            stroke: '#1a0030',
-            strokeThickness: 3,
+            color: accentHex, stroke: '#1a0030', strokeThickness: 3,
         }).setOrigin(0.5).setDepth(6);
 
         this.tweens.add({
@@ -186,14 +156,12 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
             duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
         });
 
-        // ── Hit zone ─────────────────────────────────────────────────────────
         const zone = this.add.zone(cx, cy, cardW, cardH)
             .setInteractive({ useHandCursor: true }).setDepth(7);
-
         zone.on('pointerover', () => { drawCard(bgHover, 1.0); btnText.setColor('#ffffff'); });
         zone.on('pointerout', () => { drawCard(bgBase, 0.9); btnText.setColor(accentHex); });
         zone.on('pointerdown', () => {
-            window.selectedArena = arenaKey;  // eslint-disable-line no-undef
+            window.selectedArena = arenaKey;
             drawCard(isRuins ? 0x4a2a60 : 0x280850, 1.0);
             this.time.delayedCall(130, () => this.scene.start('GameScene'));
         });
@@ -202,7 +170,6 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
     _buildCardPreview(isRuins, cx, cy, cardW, cardH, x0, y0) {
         const previewH = cardH * 0.38;
         const previewGfx = this.add.graphics().setDepth(5);
-
         if (isRuins) {
             previewGfx.fillGradientStyle(0x2a1040, 0x2a1040, 0x503060, 0x503060, 1);
         } else {
@@ -213,7 +180,6 @@ class MenuScene extends Phaser.Scene {  // eslint-disable-line no-undef
         const midX = cx;
         const midY = y0 + cardH * 0.18 + previewH * 0.5;
         const iconGfx = this.add.graphics().setDepth(6);
-
         if (isRuins) {
             iconGfx.fillStyle(0x3a1a50, 1);
             iconGfx.fillTriangle(

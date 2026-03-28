@@ -17,20 +17,25 @@
     <!--
         Load order — each file depends only on what's above it:
 
-        1. config.js    — API keys (must be first)
-        2. audio.js     — mic capture + Gemini; sets playerSpeed global
-        3. arena.js     — window.ARENAS definitions
-        4. utils.js     — createCircleTexture, createSpellTextures, volumeToScale, createSoulsButton
-        5. spells.js    — SpellCaster class; registers window.spellCaster
-        6. socket.js    — socket, myPlayerId, gameSceneRef + event wiring
-        7. scenes/      — Phaser Scene classes
-        8. game.js      — Phaser.Game instantiation
-        9. bg-shader.js — WebGPU background (async, independent)
+        1.  config.js       — API keys (must be first)
+        2.  spell-config.js — Global spell constants & volumeToScale()
+        3.  audio.js        — Mic capture + Gemini; state machine events
+        4.  arena.js        — window.ARENAS definitions
+        5.  utils.js        — createCircleTexture, createSoulsButton
+        6.  hud.js          — CastingHUD class (casting state indicators)
+        7.  spells.js       — SpellCaster class; registers window.spellCaster
+        8.  socket.js       — socket, myPlayerId, gameSceneRef + event wiring
+        9.  scenes/         — Phaser Scene classes
+        10. game.js         — Phaser.Game instantiation
+        11. spell-fx.js     — WebGPU spell sprite generation (async, ES module)
+        12. bg-shader.js    — WebGPU background (async, independent)
     -->
     <script src="config.js"></script>
+    <script src="spell-config.js"></script>
     <script src="audio.js"></script>
     <script src="arena.js"></script>
     <script src="utils.js"></script>
+    <script src="hud.js"></script>
     <script src="spells.js"></script>
     <script src="socket.js"></script>
     <script src="scenes/MenuScene.js"></script>

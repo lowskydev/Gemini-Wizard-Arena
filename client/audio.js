@@ -1,13 +1,13 @@
-// audio.js - Web Audio & Gemini AI Integration
+// audio.js — Web Audio & Gemini AI Integration
 //
 // ═══════════════════════════════════════════════════════════════
-//  SPELLS (hold SHIFT, say the spell name, release SHIFT):
-//  "Fireball" · "Frostbite" · "Bolt" · "Nova" · "Surprise"
-//  BACKFIRE: mumble or wrong word → spell hits YOU instead.
+//  FLOW: Press SHIFT once → "Say a spell!" → speak → auto-stop
+//        → "Charging…" while API processes → "Ready!" on result
+//  SPELLS: "Fireball" · "Frostbite" · "Bolt" · "Nova" · "Surprise"
 // ═══════════════════════════════════════════════════════════════
 
 const PLAYER_SPEED_NORMAL = 1.0;
-const PLAYER_SPEED_CASTING = 0.5;
+const PLAYER_SPEED_CASTING = window.SPELL_CONFIG?.CASTING_SPEED_MULT ?? 0.5;
 
 const API_KEY = CONFIG.GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
@@ -32,7 +32,7 @@ Rules:
 
 Do not wrap the output in markdown code blocks.`;
 
-const SPELLS = ['fireball', 'frostbite', 'bolt', 'nova'];
+const CORE_SPELLS = ['fireball', 'frostbite', 'bolt', 'nova'];
 
 let isRecording = false;
 let mediaRecorder;
@@ -43,10 +43,28 @@ let microphone;
 let animationId;
 let peakVolume = 0;
 
-// playerSpeed read by game.js handleMyMovement() as a global
+// Casting state — read by game via events
 var playerSpeed = PLAYER_SPEED_NORMAL;
 
-// ─── Audio Init ───────────────────────────────────────────────────────────────
+// ── Casting state machine ─────────────────────────────────────────────────
+// States: IDLE → LISTENING → PROCESSING → READY → IDLE
+// Events dispatched: castStateChange { detail: { state, data? } }
+
+const CastState = { IDLE: 'idle', LISTENING: 'listening', PROCESSING: 'processing', READY: 'ready' };
+window.CastState = CastState;
+let currentCastState = CastState.IDLE;
+
+function setCastState(state, data) {
+  currentCastState = state;
+  window.dispatchEvent(new CustomEvent('castStateChange', { detail: { state, data } }));
+}
+
+// Keep currentCastState in sync when OTHER files dispatch the event (e.g. spells.js resets to IDLE)
+window.addEventListener('castStateChange', (e) => {
+  currentCastState = e.detail.state;
+});
+
+// ─── Audio Init ───────────────────────────────────────────────────────────
 
 async function initAudio() {
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -70,6 +88,11 @@ async function initAudio() {
     mediaRecorder.onstop = async () => {
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
       audioChunks = [];
+
+      // Transition: LISTENING → PROCESSING
+      playerSpeed = PLAYER_SPEED_NORMAL;
+      setCastState(CastState.PROCESSING);
+
       await sendAudioToGemini(audioBlob, peakVolume);
     };
 
@@ -80,7 +103,7 @@ async function initAudio() {
   }
 }
 
-// ─── Volume Loop ──────────────────────────────────────────────────────────────
+// ─── Volume Loop ──────────────────────────────────────────────────────────
 
 function updateVolumeLevel() {
   if (!isRecording) return;
@@ -89,10 +112,14 @@ function updateVolumeLevel() {
   const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length;
   const vol = Math.min(100, Math.max(1, Math.round((avg / 255) * 100 * 1.5)));
   if (vol > peakVolume) peakVolume = vol;
+
+  // Dispatch live volume for HUD visualisation
+  window.dispatchEvent(new CustomEvent('micVolume', { detail: vol }));
+
   animationId = requestAnimationFrame(updateVolumeLevel);
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -105,10 +132,10 @@ function blobToBase64(blob) {
 
 function resolveSpell(spell) {
   if (spell !== 'surprise') return spell;
-  return SPELLS[Math.floor(Math.random() * SPELLS.length)];
+  return CORE_SPELLS[Math.floor(Math.random() * CORE_SPELLS.length)];
 }
 
-// ─── Gemini API Call ──────────────────────────────────────────────────────────
+// ─── Gemini API Call ──────────────────────────────────────────────────────
 
 async function sendAudioToGemini(audioBlob, volume) {
   try {
@@ -136,6 +163,7 @@ async function sendAudioToGemini(audioBlob, volume) {
 
     if (!replyTxt) {
       console.error('[Gemini Error]: Unexpected payload:', data);
+      setCastState(CastState.IDLE);
       return;
     }
 
@@ -155,6 +183,9 @@ async function sendAudioToGemini(audioBlob, volume) {
     console.log(' backfire:', result.backfire);
     console.log('-----------------------------------------');
 
+    // Transition: PROCESSING → READY (with spell data)
+    setCastState(CastState.READY, result);
+
     // Hand off to Phaser game
     if (typeof window.castSpellFromAudio === 'function') {
       window.castSpellFromAudio(result);
@@ -164,49 +195,60 @@ async function sendAudioToGemini(audioBlob, volume) {
 
   } catch (err) {
     console.error('[Gemini Request Error]:', err);
+    setCastState(CastState.IDLE);
   }
 }
 
-// ─── SHIFT Key Listeners ──────────────────────────────────────────────────────
+// ─── SHIFT Key — Toggle-based recording ───────────────────────────────────
+// Press SHIFT once → start recording → auto-stops after RECORD_DURATION_MS
+// Press SHIFT again while recording → immediate stop
 
 let lastCastTime = 0;
-const CAST_COOLDOWN_MS = 2000; // 2 seconds between casts
 let recordingTimeout;
+const CAST_COOLDOWN_MS = window.SPELL_CONFIG?.CAST_COOLDOWN_MS ?? 2000;
+const RECORD_DURATION_MS = window.SPELL_CONFIG?.RECORD_DURATION_MS ?? 2500;
 
 window.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Shift' || e.repeat) return;
+
+  // If already recording, stop immediately (toggle off)
+  if (isRecording) {
+    if (recordingTimeout) clearTimeout(recordingTimeout);
+    stopRecording();
+    return;
+  }
+
+  // If in PROCESSING or READY state, ignore new recordings
+  if (currentCastState === CastState.PROCESSING || currentCastState === CastState.READY) return;
+
+  // Cooldown check
   const now = Date.now();
-  if (e.key === 'Shift' && !e.repeat) {
-    if (isRecording) {
-      // Early stop if pressed again while recording
-      if (recordingTimeout) clearTimeout(recordingTimeout);
+  if ((now - lastCastTime) < CAST_COOLDOWN_MS) return;
+
+  // Init mic if needed
+  if (!mediaRecorder) {
+    const ok = await initAudio();
+    if (!ok) return;
+  }
+
+  if (mediaRecorder.state === 'inactive') {
+    if (audioContext?.state === 'suspended') await audioContext.resume();
+
+    isRecording = true;
+    peakVolume = 0;
+    playerSpeed = PLAYER_SPEED_CASTING;
+
+    // Transition: IDLE → LISTENING
+    setCastState(CastState.LISTENING);
+
+    console.log('[Shift] Recording started (toggle). Speed → 50%');
+    mediaRecorder.start();
+    updateVolumeLevel();
+
+    // Auto-stop after duration
+    recordingTimeout = setTimeout(() => {
       stopRecording();
-      return;
-    }
-
-    if ((now - lastCastTime) < CAST_COOLDOWN_MS) return;
-
-    if (!mediaRecorder) {
-      const ok = await initAudio();
-      if (!ok) return;
-    }
-
-    if (mediaRecorder.state === 'inactive') {
-      if (audioContext?.state === 'suspended') await audioContext.resume();
-      isRecording = true;
-      peakVolume = 0;
-      playerSpeed = PLAYER_SPEED_CASTING;
-      console.log('[Shift Down] Recording... speed -> 50%');
-      mediaRecorder.start();
-      updateVolumeLevel();
-      
-      // Notify UI
-      window.dispatchEvent(new Event('spellRecordStart'));
-
-      // Auto-stop after 2.5 seconds
-      recordingTimeout = setTimeout(() => {
-        stopRecording();
-      }, 2500);
-    }
+    }, RECORD_DURATION_MS);
   }
 });
 
@@ -214,9 +256,8 @@ function stopRecording() {
   if (!isRecording) return;
   isRecording = false;
   lastCastTime = Date.now();
-  playerSpeed = PLAYER_SPEED_NORMAL;
-  console.log('[Stop] Recording stopped. speed -> 100%');
-  window.dispatchEvent(new Event('spellRecordStop'));
+
+  console.log('[Stop] Recording stopped.');
 
   if (mediaRecorder?.state === 'recording') {
     mediaRecorder.stop();

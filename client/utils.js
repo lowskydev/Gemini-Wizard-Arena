@@ -7,6 +7,7 @@
  */
 const createCircleTexture = (scene, key, radius, color) => {
     try {
+        if (scene.textures.exists(key)) return; // avoid duplicate
         const gfx = scene.add.graphics();
         gfx.fillStyle(color, 1);
         gfx.fillCircle(radius, radius, radius);
@@ -16,18 +17,6 @@ const createCircleTexture = (scene, key, radius, color) => {
         console.error('[createCircleTexture Error]:', err);
     }
 };
-
-/**
- * Maps a mic-volume reading (1–100) to a spell scale multiplier.
- *   1–50  → 1.0× (normal)
- *  51–85  → 1.5× (yelling)
- *  86–100 → 2.0× (screaming)
- */
-function volumeToScale(volume) {
-    if (volume <= 50) return 1.0;
-    if (volume <= 85) return 1.5;
-    return 2.0;
-}
 
 /**
  * Creates a Dark-Souls-style interactive button inside a Phaser container.

@@ -7,16 +7,12 @@ class EndScene extends Phaser.Scene {   // eslint-disable-line no-undef
         this.timeElapsed = 0;
     }
 
-    // ── create ────────────────────────────────────────────────────────────────
     create() {
         gameSceneRef = null; // eslint-disable-line no-undef
-
         const { width, height } = this.scale;
 
-        // Dark red overlay
         this.add.rectangle(0, 0, width, height, 0x440000, 0.5).setOrigin(0);
 
-        // Animated "YOU DIED" title
         this.deathText = this.add.text(width / 2, height * 0.38, 'YOU DIED', {
             fontFamily: 'Georgia, serif',
             fontSize: '140px',
@@ -28,13 +24,10 @@ class EndScene extends Phaser.Scene {   // eslint-disable-line no-undef
         this.deathText.setAlpha(0);
         this.add.tween({
             targets: this.deathText,
-            alpha: 1,
-            scale: { from: 0.9, to: 1 },
-            duration: 3000,
-            ease: 'Sine.easeOut',
+            alpha: 1, scale: { from: 0.9, to: 1 },
+            duration: 3000, ease: 'Sine.easeOut',
         });
 
-        // Navigation buttons
         createSoulsButton(this, width / 2 - 150, height * 0.7, 'Go To Lobby', () => {  // eslint-disable-line no-undef
             this.scene.start('MenuScene');
         });
@@ -43,10 +36,8 @@ class EndScene extends Phaser.Scene {   // eslint-disable-line no-undef
         });
     }
 
-    // ── update ────────────────────────────────────────────────────────────────
     update(time, delta) {
         this.timeElapsed += delta;
-        // Subtle breathing pulse on the death text
         this.deathText.setScale(1 + Math.sin(this.timeElapsed * 0.001) * 0.02);
     }
 }

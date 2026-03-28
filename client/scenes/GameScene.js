@@ -1,5 +1,5 @@
 // scenes/GameScene.js — Phaser scene: lifecycle, movement, UI, network wiring.
-// All spell logic lives in client/spells.js (window.spellCaster).
+// Spell logic lives in client/spells.js. HUD in client/hud.js.
 // HP is server-authoritative: damage events emit SPELL_HIT; server broadcasts HP_UPDATE.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         this.platforms = null;
         this.playerIndicator = null;
         this.wasd = null;
-        this._castingLabel = null;
+        this.castingHUD = null;
         this.stateTimer = 0;
         this.STATE_INTERVAL = 50; // ms — 20 updates/sec
     }
@@ -38,16 +38,18 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             const { width, height } = this.scale;
 
             this._buildArena(width, height);
-            await this._buildTextures();
+            await this._buildSpellTextures();
             this._buildAnimations();
             this._buildPlayers(width, height);
             this._buildPlatforms(width, height);
             this._buildBallGroup();
             this._buildInput();
-            this._buildHUD(width, height);
 
-            // Hand the ball group to the spell system
+            // Init spell system
             window.spellCaster.init(this, this.fireballs);  // eslint-disable-line no-undef
+
+            // Init HUD
+            this.castingHUD = new CastingHUD(this);  // eslint-disable-line no-undef
 
             this.assignPlayers();
             console.log('[GameScene]: ready. myPlayerId =', myPlayerId);  // eslint-disable-line no-undef
@@ -68,9 +70,14 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             this._drawHealthBar(this.player2);
             this._updateIndicator(time);
             this._emitState(delta);
+            if (this.castingHUD) this.castingHUD.update();
         } catch (err) {
             console.error('[GameScene.update Error]:', err);
         }
+    }
+
+    shutdown() {
+        if (this.castingHUD) this.castingHUD.destroy();
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -82,45 +89,62 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         arena?.buildBackground?.(this);
     }
 
-    async _buildTextures() {
+    async _buildSpellTextures() {
         try {
+            // Wait for spell-fx.js module to register on window
             let attempts = 50;
-            while (!window.generateFireballSpritesheet && attempts-- > 0) {
+            while (!window.generateAllSpellSpritesheets && attempts-- > 0) {
                 await new Promise(r => setTimeout(r, 100));
             }
-            if (window.generateFireballSpritesheet) {
-                const canvas = await window.generateFireballSpritesheet();
-                this.textures.addSpriteSheet('fireball_fancy', canvas, {
-                    frameWidth: 32, frameHeight: 32,
-                });
-                console.log('[GameScene]: TypeGPU fireball ready.');
+
+            if (window.generateAllSpellSpritesheets) {
+                const sheets = await window.generateAllSpellSpritesheets();
+
+                for (const [spellName, canvas] of Object.entries(sheets)) {
+                    if (!canvas) continue;
+                    const texKey = `spell_${spellName}_fancy`;
+                    this.textures.addSpriteSheet(texKey, canvas, {
+                        frameWidth: 32, frameHeight: 32,
+                    });
+                    window.spellCaster.registerFancyTexture(spellName);
+                    console.log(`[GameScene]: ${spellName} WebGPU texture registered.`);
+                }
             }
         } catch (e) {
-            console.warn('[GameScene]: TypeGPU skipped —', e.message);
+            console.warn('[GameScene]: WebGPU spell textures skipped —', e.message);
             window.lastSpellFXError = e.message;
         }
     }
 
     _buildAnimations() {
+        // Player animations
         [
             { key: 'rogue-idle', start: 0, end: 9, frameRate: 10, repeat: -1 },
             { key: 'rogue-cast', start: 10, end: 19, frameRate: 15, repeat: 0 },
             { key: 'rogue-run', start: 20, end: 29, frameRate: 15, repeat: -1 },
         ].forEach(({ key, start, end, frameRate, repeat }) => {
-            this.anims.create({
-                key,
-                frames: this.anims.generateFrameNumbers('rogue', { start, end }),
-                frameRate, repeat,
-            });
+            if (!this.anims.exists(key)) {
+                this.anims.create({
+                    key,
+                    frames: this.anims.generateFrameNumbers('rogue', { start, end }),
+                    frameRate, repeat,
+                });
+            }
         });
 
-        if (this.textures.exists('fireball_fancy')) {
-            this.anims.create({
-                key: 'fireball-fancy',
-                frames: this.anims.generateFrameNumbers('fireball_fancy', { start: 0, end: 15 }),
-                frameRate: 20, repeat: -1,
-            });
-        }
+        // Spell spritesheet animations (WebGPU-generated)
+        const spellNames = ['fireball', 'frostbite', 'bolt', 'nova'];
+        spellNames.forEach(name => {
+            const texKey = `spell_${name}_fancy`;
+            const animKey = `${name}-fancy`;
+            if (this.textures.exists(texKey) && !this.anims.exists(animKey)) {
+                this.anims.create({
+                    key: animKey,
+                    frames: this.anims.generateFrameNumbers(texKey, { start: 0, end: 15 }),
+                    frameRate: 20, repeat: -1,
+                });
+            }
+        });
     }
 
     _buildPlayers(width, height) {
@@ -171,88 +195,34 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
 
     _buildInput() {
         this.wasd = {
-            left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),     // eslint-disable-line no-undef
+            left:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),     // eslint-disable-line no-undef
             right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),     // eslint-disable-line no-undef
-            down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),     // eslint-disable-line no-undef
-            jump: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE), // eslint-disable-line no-undef
+            down:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),     // eslint-disable-line no-undef
+            jump:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE), // eslint-disable-line no-undef
         };
 
-        // Click to cast prepared spell
+        // Click to fire the prepared spell at the cursor
         this.input.on('pointerdown', (pointer) => {
-            if (this.myPlayer?.preparedSpell) {
-                const result = this.myPlayer.preparedSpell;
-                this.myPlayer.preparedSpell = null; // Clear after use
+            if (!this.myPlayer?.preparedSpell) return;
 
-                const scale = (typeof volumeToScale !== 'undefined') ? volumeToScale(result.volume) : 1.0; // eslint-disable-line no-undef
+            const result = this.myPlayer.preparedSpell;
+            this.myPlayer.preparedSpell = null;
 
-                window.spellCaster.cast(  // eslint-disable-line no-undef
-                    result,
-                    this.myPlayer,
-                    this.otherPlayer,
-                    pointer
-                );
+            const scale = (typeof volumeToScale !== 'undefined') ? volumeToScale(result.volume) : 1.0; // eslint-disable-line no-undef
 
-                // Broadcast to other player
-                const dx = pointer.worldX - this.myPlayer.x;
-                const dy = pointer.worldY - this.myPlayer.y;
-                socket.emit('SPELL_CAST', {  // eslint-disable-line no-undef
-                    spell: result.spell,
-                    x: this.myPlayer.x,
-                    y: this.myPlayer.y,
-                    targetX: pointer.worldX,
-                    targetY: pointer.worldY,
-                    angle: Math.atan2(dy, dx),
-                    scale: scale,
-                });
-            }
+            window.spellCaster.cast(result, this.myPlayer, this.otherPlayer, pointer);  // eslint-disable-line no-undef
+
+            // Broadcast to other player
+            socket.emit('SPELL_CAST', {  // eslint-disable-line no-undef
+                spell: result.spell,
+                x: this.myPlayer.x,
+                y: this.myPlayer.y,
+                targetX: pointer.worldX,
+                targetY: pointer.worldY,
+                angle: Math.atan2(pointer.worldY - this.myPlayer.y, pointer.worldX - this.myPlayer.x),
+                scale: scale,
+            });
         });
-    }
-
-    _buildHUD(width, height) {
-        // "CASTING…" label
-        this._castingLabel = this.add.text(width / 2, 60, '', {
-            fontSize: '28px', fontFamily: '"Courier New", monospace',
-            color: '#ff8800', stroke: '#000000', strokeThickness: 4,
-        }).setOrigin(0.5).setDepth(50).setScrollFactor(0);
-
-        window.addEventListener('spellRecordStart', () => {
-            if (this._castingLabel) this._castingLabel.setText('🎤  LISTENING…');
-        });
-        window.addEventListener('spellRecordStop', () => {
-            if (this._castingLabel) {
-                this._castingLabel.setText('⏳  PREPARING…');
-                this.time.delayedCall(1500, () => {
-                   if (this._castingLabel.text === '⏳  PREPARING…') this._castingLabel.setText('');
-                });
-            }
-        });
-
-        // Spell legend
-        const lines = [
-            { color: '#ff8800', text: '● FIREBALL  — burning DoT' },
-            { color: '#44ddff', text: '● FROSTBITE — slow' },
-            { color: '#ffee22', text: '● BOLT      — fast, low dmg' },
-            { color: '#bb44ff', text: '● NOVA      — 360° shockwave' },
-        ];
-        const baseY = height - 20 - lines.length * 22;
-        lines.forEach(({ color, text }, i) => {
-            this.add.text(12, baseY + i * 22, text, {
-                fontSize: '14px', fontFamily: '"Courier New", monospace',
-                color, stroke: '#000000', strokeThickness: 2,
-                backgroundColor: '#00000066', padding: { x: 4, y: 2 },
-            }).setDepth(50).setScrollFactor(0);
-        });
-
-        this.add.text(width / 2, height - 20, 'Press SHIFT to Speak  •  Left-Click to Fire', {
-            fontSize: '15px', fontFamily: '"Courier New", monospace',
-            color: '#ffffff', stroke: '#000000', strokeThickness: 2,
-        }).setOrigin(0.5).setDepth(50).setScrollFactor(0);
-
-        const hasGPU = this.textures.exists('fireball_fancy');
-        this.add.text(10, height - 20, `FX: ${hasGPU ? 'WebGPU ✨' : 'Standard'}`, {
-            fontSize: '13px', color: hasGPU ? '#ffff00' : '#666666',
-            backgroundColor: '#000000cc', padding: { x: 4, y: 3 },
-        }).setDepth(100).setScrollFactor(0);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -281,15 +251,16 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         console.log(`[GameScene]: I am ${myPlayerId}`);  // eslint-disable-line no-undef
     }
 
+    /** Called by socket.js when Gemini returns a spell result. */
     prepareSpell(result) {
         if (!this.myPlayer) return;
         this.myPlayer.preparedSpell = result;
-        if (this._castingLabel) this._castingLabel.setText('✅  READY!');
-        this.time.delayedCall(1000, () => {
-            if (this._castingLabel.text === '✅  READY!') this._castingLabel.setText('');
-        });
         console.log('[GameScene]: Spell Prepared:', result.spell);
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  Movement
+    // ═════════════════════════════════════════════════════════════════════════
 
     _handleMovement() {
         const castMult = (typeof playerSpeed !== 'undefined') ? playerSpeed : 1.0;  // eslint-disable-line no-undef
@@ -316,7 +287,7 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  Health bar (display only — truth lives on server)
+    //  Health bar
     // ═════════════════════════════════════════════════════════════════════════
 
     _drawHealthBar(player) {
@@ -353,11 +324,9 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             const player = isPlayer(obj1) ? obj1 : obj2;
             const ball = isPlayer(obj1) ? obj2 : obj1;
 
-            // Delegate to SpellCaster for VFX + debuffs
             const dmg = window.spellCaster.onHit(ball, player, this.myPlayer);  // eslint-disable-line no-undef
             if (dmg === 0) return;
 
-            // Tell the server — it owns HP
             socket.emit('SPELL_HIT', {  // eslint-disable-line no-undef
                 targetId: (player === this.player1) ? 'Player 1' : 'Player 2',
                 damage: dmg,
@@ -382,9 +351,11 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             this.preparedLabel.setPosition(this.myPlayer.x, this.myPlayer.y - 110 + bob);
             const spell = this.myPlayer.preparedSpell?.spell;
             if (spell) {
-                this.preparedLabel.setText(`✨ ${spell.toUpperCase()}`);
+                const cfg = window.SPELL_CONFIG?.SPELLS?.[spell];
+                this.preparedLabel.setText(`✨ ${(cfg?.displayName ?? spell).toUpperCase()}`);
+                this.preparedLabel.setColor(cfg?.glowColor ?? '#00ffff');
                 this.preparedLabel.setVisible(true);
-                this.playerIndicator.setTint(0x00ffff);
+                this.playerIndicator.setTint(cfg?.color ?? 0x00ffff);
             } else {
                 this.preparedLabel.setVisible(false);
                 this.playerIndicator.clearTint();
@@ -433,7 +404,6 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             if (!player) return;
 
             player.hp = hp;
-
             player.setTint(0xff0000);
             this.time.delayedCall(200, () => player.clearTint());
 
