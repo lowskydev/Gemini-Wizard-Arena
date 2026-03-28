@@ -111,18 +111,48 @@ window.ARENAS = {
 
         preload(scene) {
             scene.load.image('platformertiles', 'assets/platformertiles.png');
+            scene.load.image('mountains-far', 'assets/parallax_mountain_pack/layers/parallax-mountain-montain-far.png');
+            scene.load.image('mountains-mid', 'assets/parallax_mountain_pack/layers/parallax-mountain-mountains.png');
         },
 
         buildBackground(scene) {
             const { width, height } = scene.scale;
 
-            // Deep night sky gradient fill
-            const bg = scene.add.graphics().setDepth(-5);
+            // 1. Deep night sky gradient
+            const bg = scene.add.graphics().setDepth(-10);
             bg.fillGradientStyle(0x050510, 0x050510, 0x0a0525, 0x0a0525, 1);
             bg.fillRect(0, 0, width, height);
 
-            // Moon procedural glowing moon
-            const moonGfx = scene.add.graphics().setDepth(-4);
+            // 2. Procedural Stars
+            const stars = scene.add.graphics().setDepth(-9);
+            stars.fillStyle(0xffffff, 0.4);
+            for (let i = 0; i < 60; i++) {
+                stars.fillCircle(Math.random() * width, Math.random() * (height * 0.5), 1);
+            }
+
+            // 3. Distant Mountains (Asset-based)
+            const mount1 = scene.add.image(width / 2, height / 2, 'mountains-far').setDisplaySize(width, height).setDepth(-8.7);
+            mount1.setTint(0x050515);
+            const mount2 = scene.add.image(width / 2, height / 2, 'mountains-mid').setDisplaySize(width, height).setDepth(-8.5);
+            mount2.setTint(0x080820);
+
+            // 4. Distant Background Arches (Silhouettes)
+            const archGfx = scene.add.graphics().setDepth(-8);
+            archGfx.fillStyle(0x08081a, 1);
+            const archCount = 4;
+            const archSpacing = width / archCount;
+            for (let i = 0; i < archCount; i++) {
+                const ax = archSpacing * i + archSpacing/2;
+                const ay = height - 120;
+                const aw = 120, ah = 280;
+                archGfx.fillEllipse(ax, ay, aw, ah);
+                archGfx.fillRect(ax - aw/2, ay, aw, ah/2);
+            }
+
+            // 5. Moon with Outer Glow
+            const moonGfx = scene.add.graphics().setDepth(-7);
+            moonGfx.fillStyle(0x4a4a8a, 0.2);
+            moonGfx.fillCircle(width * 0.5, height * 0.18, 70);
             moonGfx.fillStyle(0xd8e8ff, 0.9);
             moonGfx.fillCircle(width * 0.5, height * 0.18, 48);
             moonGfx.fillStyle(0xffffff, 0.3);

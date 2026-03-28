@@ -133,8 +133,13 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         this.platforms = arena?.buildPlatforms?.(this, width, height)
             ?? this.physics.add.staticGroup();
 
-        this.physics.add.collider(this.player1, this.platforms);
-        this.physics.add.collider(this.player2, this.platforms);
+        const dropDownCallback = (p) => {
+            if (p === this.myPlayer && this.wasd.down.isDown) return false;
+            return true;
+        };
+
+        this.physics.add.collider(this.player1, this.platforms, null, dropDownCallback, this);
+        this.physics.add.collider(this.player2, this.platforms, null, dropDownCallback, this);
     }
 
     _buildFireballGroup() {
@@ -157,6 +162,7 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         this.wasd = {
             left: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),   // eslint-disable-line no-undef
             right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),   // eslint-disable-line no-undef
+            down: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),    // eslint-disable-line no-undef
             jump: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE), // eslint-disable-line no-undef
         };
 
