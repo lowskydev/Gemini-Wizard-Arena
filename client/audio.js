@@ -1,10 +1,53 @@
 // audio.js - Web Audio & Gemini AI Integration
+//
+// ═══════════════════════════════════════════════════════════════
+//  SPELLS (hold SHIFT, say the spell name, release SHIFT):
+//  ────────────────────────────────────────────────────────
+//  "Fireball"  → Fast orange projectile toward the cursor.
+//  "Frostbite" → Slow icy projectile, slows enemy on hit.
+//  "Bolt"      → Lightning-fast straight projectile.
+//  "Nova"      → Explodes in all directions from the caster.
+//  "Surprise"  → Random spell. Chaos is the point.
+//
+//  BACKFIRE: mumble or stutter → spell hits YOU instead.
+//
+//  OUTPUT JSON:
+//  { spell, clarity, volume, backfire }
+//    spell    — spell name (surprise already resolved to a real spell)
+//    clarity  — 0–100, how clearly the word was spoken (from Gemini)
+//    volume   — 1–100, mic peak volume (from mic)
+//    backfire — true if the cast should explode on the caster
+// ═══════════════════════════════════════════════════════════════
+
+const PLAYER_SPEED_NORMAL = 1.0;  // Movement multiplier when idle
+const PLAYER_SPEED_CASTING = 0.5;  // Movement multiplier while holding SHIFT
 
 const API_KEY = CONFIG.GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
 
-// System prompt exactly as defined in the skill file
-const SYSTEM_PROMPT = `Listen to the audio. Determine which spell the user is trying to cast. Return ONLY a valid JSON object matching this schema: { "spell": "fireball" | "frostbite" | "bolt" | "nova", "backfire": boolean }. If the user is mumbling, stuttering, or the word is unintelligible, set backfire to true. Do not wrap the output in markdown code blocks.`;
+const SYSTEM_PROMPT = `Listen to the audio and transcribe exactly what the user said.
+
+The ONLY valid spell names are these 5 English words: "fireball", "frostbite", "bolt", "nova", "surprise".
+
+First, transcribe what you heard. Then compare it strictly to the 5 valid spell names.
+
+Return ONLY a valid JSON object matching this schema:
+{
+  "heard": string,
+  "spell": "fireball" | "frostbite" | "bolt" | "nova" | "surprise",
+  "clarity": number (0-100),
+  "backfire": boolean
+}
+
+Rules:
+- "heard" -> write out exactly what word or words you heard, in whatever language.
+- "spell" -> only if "heard" exactly matches one of the 5 valid spell names (case-insensitive). Otherwise pick the closest one as a formality — it does not matter since backfire will be true.
+- "clarity" -> how closely "heard" matches one of the 5 exact valid spell names. If "heard" is not one of the 5 spell names, clarity must be below 25, no exceptions. If "heard" is a different language word, clarity must be below 10.
+- "backfire" -> true if "heard" is anything other than one of the 5 exact spell names. This includes: words in other languages, partial spell names, random English words, mumbling, silence, or anything else. backfire is ONLY false when the user said one of the 5 exact spell names clearly.
+
+Do not wrap the output in markdown code blocks.`;
+
+const SPELLS = ['fireball', 'frostbite', 'bolt', 'nova'];
 
 let isRecording = false;
 let mediaRecorder;
@@ -14,23 +57,21 @@ let analyser;
 let microphone;
 let animationId;
 let peakVolume = 0;
-let playerSpeed = 1.0; // Track movement speed (1.0 = 100%, 0.5 = 50%)
+let playerSpeed = PLAYER_SPEED_NORMAL;
 
-// Initialize audio context and request microphone permissions
+// ─── Audio Init ───────────────────────────────────────────────────────────────
+
 async function initAudio() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    console.error("getUserMedia is not supported on your browser!");
+    console.error('[Audio Init Error]: getUserMedia not supported in this browser.');
     return false;
   }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    // Choose appropriate mime type
-    // WebM is widely supported for recording in Chrome/Firefox
     mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
-    // Set up AudioContext for volume calculation
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
@@ -39,111 +80,74 @@ async function initAudio() {
     microphone.connect(analyser);
 
     mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        audioChunks.push(e.data);
-      }
+      if (e.data.size > 0) audioChunks.push(e.data);
     };
 
     mediaRecorder.onstop = async () => {
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      audioChunks = []; // reset for next recording
-
-      // Calculate multiplier from peak volume locally
-      let scaleMultiplier = 1.0;
-      if (peakVolume >= 1 && peakVolume <= 50) {
-        scaleMultiplier = 1.0; // Normal
-      } else if (peakVolume >= 51 && peakVolume <= 85) {
-        scaleMultiplier = 1.5; // Yelling
-      } else if (peakVolume >= 86 && peakVolume <= 100) {
-        scaleMultiplier = 2.0; // Screaming
-      }
-
-      console.log(`Recording finished. Peak volume: ${peakVolume}/100, Applied Multiplier: ${scaleMultiplier}x`);
-
-      // Send the recorded audio to Gemini API
-      await sendAudioToGemini(audioBlob, scaleMultiplier);
+      audioChunks = [];
+      await sendAudioToGemini(audioBlob, peakVolume);
     };
 
     return true;
   } catch (err) {
-    console.error("Error accessing the microphone:", err);
+    console.error('[Audio Init Error]:', err);
     return false;
   }
 }
 
-// Loop to calculate the volume while recording
+// ─── Volume Loop ──────────────────────────────────────────────────────────────
+
 function updateVolumeLevel() {
   if (!isRecording) return;
 
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteFrequencyData(dataArray);
 
-  let sum = 0;
-  for (let i = 0; i < bufferLength; i++) {
-    sum += dataArray[i];
-  }
+  const average = dataArray.reduce((sum, v) => sum + v, 0) / dataArray.length;
+  const currentVolume = Math.min(100, Math.max(1, Math.round((average / 255) * 100 * 1.5)));
 
-  const average = sum / bufferLength;
-  // Normalize average (0-255) to a 1-100 scale
-  // Multiplied slightly to make higher values more reachable
-  let currentVolume = Math.min(100, Math.max(1, Math.round((average / 255) * 100 * 1.5)));
-
-  if (currentVolume > peakVolume) {
-    peakVolume = currentVolume;
-  }
+  if (currentVolume > peakVolume) peakVolume = currentVolume;
 
   animationId = requestAnimationFrame(updateVolumeLevel);
 }
 
-// Helper to encode Blob to base64 for the inline_data requirement of Gemini API
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => {
-      // FileReader result looks like: "data:audio/webm;base64,GkXf..."
-      // We only want the base64 string
-      const baseString = reader.result.split(',')[1];
-      resolve(baseString);
-    };
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 }
 
-// Fetch request to Gemini 1.5 API
-async function sendAudioToGemini(audioBlob, scaleMultiplier) {
+function resolveSpell(spell) {
+  if (spell !== 'surprise') return spell;
+  return SPELLS[Math.floor(Math.random() * SPELLS.length)];
+}
+
+// ─── Gemini API Call ──────────────────────────────────────────────────────────
+
+async function sendAudioToGemini(audioBlob, volume) {
   try {
     const base64Audio = await blobToBase64(audioBlob);
 
     const payload = {
-      system_instruction: {
-        parts: [{ text: SYSTEM_PROMPT }]
-      },
-      contents: [
-        {
-          parts: [
-            {
-              inline_data: {
-                mime_type: "audio/webm",
-                data: base64Audio
-              }
-            }
-          ]
-        }
-      ],
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{
+        parts: [{ inline_data: { mime_type: 'audio/webm', data: base64Audio } }]
+      }],
       generationConfig: {
         temperature: 0.1,
-        // Optional: enforces json output structure if applicable
-        response_mime_type: "application/json"
+        response_mime_type: 'application/json'
       }
     };
 
     const response = await fetch(GEMINI_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
@@ -155,45 +159,53 @@ async function sendAudioToGemini(audioBlob, scaleMultiplier) {
     const data = await response.json();
     const botReplyText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (botReplyText) {
-      const parsedJSON = JSON.parse(botReplyText.trim());
-      console.log("-----------------------------------------");
-      console.log(" Spell Parsing Result:", parsedJSON);
-      console.log(" Volume Scale Multiplier:", scaleMultiplier);
-      console.log("-----------------------------------------");
-    } else {
-      console.error("Unexpected response payload from Gemini:", data);
+    if (!botReplyText) {
+      console.error('[Gemini Error]: Unexpected response payload:', data);
+      return;
     }
 
+    const parsed = JSON.parse(botReplyText.trim());
+
+    const result = {
+      spell: resolveSpell(parsed.spell),
+      clarity: parsed.clarity,
+      volume: volume,
+      backfire: parsed.backfire,
+    };
+
+    console.log('-----------------------------------------');
+    console.log(' heard:   ', parsed.heard);
+    console.log(' spell:   ', result.spell);
+    console.log(' clarity: ', result.clarity, '/ 100');
+    console.log(' volume:  ', result.volume, '/ 100');
+    console.log(' backfire:', result.backfire);
+    console.log('-----------------------------------------');
+
+    // TODO: pass result to Phaser casting function / Socket.io SPELL_CAST event
+
   } catch (error) {
-    console.error("Failed to process Gemini API request:", error);
+    console.error('[Gemini Request Error]:', error);
   }
 }
 
-// Event Listeners for SHIFT key
+// ─── SHIFT Key Listeners ──────────────────────────────────────────────────────
+
 window.addEventListener('keydown', async (e) => {
-  // Trigger only on Shift key, not repeating, and not already recording
   if (e.key === 'Shift' && !e.repeat && !isRecording) {
 
-    // Lazy-load audio setup
     if (!mediaRecorder) {
       const success = await initAudio();
       if (!success) return;
     }
 
     if (mediaRecorder.state === 'inactive') {
-      // Ensure AudioContext is running (browsers suspend it by default until interaction)
-      if (audioContext && audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
+      if (audioContext?.state === 'suspended') await audioContext.resume();
 
       isRecording = true;
-      peakVolume = 0; // Reset peak volume for new recording
+      peakVolume = 0;
+      playerSpeed = PLAYER_SPEED_CASTING;
 
-      // Constraint: drop player's movement speed to 50%
-      playerSpeed = 0.5;
-      console.log(`[Shift Down] Recording... Player speed reduced to ${playerSpeed * 100}%`);
-
+      console.log(`[Shift Down] Recording... speed -> ${playerSpeed * 100}%`);
       mediaRecorder.start();
       updateVolumeLevel();
     }
@@ -203,12 +215,11 @@ window.addEventListener('keydown', async (e) => {
 window.addEventListener('keyup', (e) => {
   if (e.key === 'Shift' && isRecording) {
     isRecording = false;
+    playerSpeed = PLAYER_SPEED_NORMAL;
 
-    // Constraint: restore player's movement speed to 100%
-    playerSpeed = 1.0;
-    console.log(`[Shift Up] Recording stopped. Player speed restored to ${playerSpeed * 100}%`);
+    console.log(`[Shift Up] Recording stopped. speed -> ${playerSpeed * 100}%`);
 
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
+    if (mediaRecorder?.state === 'recording') {
       mediaRecorder.stop();
       cancelAnimationFrame(animationId);
     }
