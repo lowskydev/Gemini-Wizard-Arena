@@ -169,8 +169,12 @@ async function sendAudioToGemini(audioBlob, volume) {
 
 // ─── SHIFT Key Listeners ──────────────────────────────────────────────────────
 
+let lastCastTime = 0;
+const CAST_COOLDOWN_MS = 2000; // 2 seconds between casts
+
 window.addEventListener('keydown', async (e) => {
-  if (e.key === 'Shift' && !e.repeat && !isRecording) {
+  const now = Date.now();
+  if (e.key === 'Shift' && !e.repeat && !isRecording && (now - lastCastTime) >= CAST_COOLDOWN_MS) {
     if (!mediaRecorder) {
       const ok = await initAudio();
       if (!ok) return;
@@ -190,6 +194,7 @@ window.addEventListener('keydown', async (e) => {
 window.addEventListener('keyup', (e) => {
   if (e.key === 'Shift' && isRecording) {
     isRecording = false;
+    lastCastTime = Date.now();
     playerSpeed = PLAYER_SPEED_NORMAL;
     console.log('[Shift Up] Recording stopped. speed -> 100%');
     if (mediaRecorder?.state === 'recording') {
