@@ -152,7 +152,7 @@ class GameScene extends Phaser.Scene {
 
             // --- WASD input ---
             this.wasd = {
-                up:    this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+                up:    this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
                 left:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
                 down:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
                 right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
@@ -236,14 +236,27 @@ class GameScene extends Phaser.Scene {
     // ── handleMyMovement ─────────────────────────────────────────────────
     handleMyMovement() {
         if (!myPlayer) return;
-        const speed = 250;
+        const speed = 400;
+        const jumpSpeed = -750;
 
         myPlayer.setVelocityX(0);  // reset each frame so drag takes over cleanly
 
         if (this.wasd.left.isDown)  myPlayer.setVelocityX(-speed);
         if (this.wasd.right.isDown) myPlayer.setVelocityX(speed);
-        if (this.wasd.up.isDown)    myPlayer.setVelocityY(-speed);
-        if (this.wasd.down.isDown)  myPlayer.setVelocityY(speed);
+
+        // Reset jumps when the player hits the floor
+        if (myPlayer.body.blocked.down || myPlayer.body.touching.down) {
+            myPlayer.jumps = 0;
+        }
+
+        // JustDown triggers once per key press (double jump limit)
+        if (Phaser.Input.Keyboard.JustDown(this.wasd.up)) {
+            if (myPlayer.jumps === undefined) myPlayer.jumps = 0;
+            if (myPlayer.jumps < 2) {
+                myPlayer.setVelocityY(jumpSpeed);
+                myPlayer.jumps++;
+            }
+        }
     }
 
     // ── updateHealthBar ───────────────────────────────────────────────────────
@@ -429,7 +442,7 @@ const config = {
     physics: {
         default: 'arcade',
         arcade: {
-            gravity: { y: 300 },
+            gravity: { y: 1500 },
             debug: false,
         },
     },
