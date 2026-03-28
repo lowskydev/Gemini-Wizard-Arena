@@ -12,6 +12,9 @@ const PORT = process.env.PORT || 3000;
 // Serve static files from the /client directory
 app.use(express.static(path.join(__dirname, '../client')));
 
+// Serve static art assets
+app.use('/assets', express.static(path.join(__dirname, '../assets')));
+
 const players = {};
 let playerCount = 0;
 
