@@ -1,6 +1,6 @@
 // audio.js - Web Audio & Gemini AI Integration
 
-const API_KEY = 'YOUR_API_KEY';
+const API_KEY = 'LOAD_FROM_ENV'; // The actual key was moved to the .env file
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
 
 // System prompt exactly as defined in the skill file
