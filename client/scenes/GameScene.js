@@ -47,13 +47,13 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         arena?.preload?.(this);
     }
 
-    create() {
+    async create() {
         try {
             gameSceneRef = this;  // eslint-disable-line no-undef
             const { width, height } = this.scale;
 
             this._buildBackground(width, height);
-            this._buildTextures();
+            await this._buildTextures();
             this._buildAnimations();
             this._buildPlayers(width, height);
             this._buildPlatforms(width, height);
@@ -61,6 +61,22 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             this._buildInput(width, height);
 
             this.assignPlayers();
+
+            // WebGPU Status Indicator
+            const hasGPU = this.textures.exists('fireball_fancy');
+            const statusColor = hasGPU ? '#ffff00' : '#ff4444';
+            let statusText = `SPELLS: ${hasGPU ? 'WebGPU ENHANCED ✨' : 'Standard ⚪'}`;
+            
+            if (!hasGPU && window.lastSpellFXError) {
+                statusText += ` (Err: ${window.lastSpellFXError.split('\n')[0].substring(0, 40)})`;
+            }
+
+            this.add.text(10, this.scale.height - 30, statusText, {
+                fontSize: '14px',
+                fill: statusColor,
+                backgroundColor: '#000000cc',
+                padding: { x: 4, y: 4 }
+            }).setScrollFactor(0).setDepth(100);
 
             console.log('[GameScene]: create() done. myPlayerId =', myPlayerId);  // eslint-disable-line no-undef
         } catch (err) {
@@ -92,7 +108,29 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         arena?.buildBackground?.(this);
     }
 
-    _buildTextures() {
+    async _buildTextures() {
+        // High-quality procedural fireball from TypeGPU
+        try {
+            // Wait up to 5 seconds for the module to register the generator
+            let attempts = 50;
+            while (!window.generateFireballSpritesheet && attempts-- > 0) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            if (window.generateFireballSpritesheet) {
+                console.log('[GameScene]: Generating TypeGPU fireball...');
+                const canvas = await window.generateFireballSpritesheet();
+                this.textures.addSpriteSheet('fireball_fancy', canvas, {
+                    frameWidth: 32,
+                    frameHeight: 32
+                });
+            } else {
+                console.warn('[GameScene]: TypeGPU spell generator not found after waiting.');
+            }
+        } catch (e) {
+            console.warn('[GameScene]: TypeGPU fireball failed.', e);
+            window.lastSpellFXError = `Gen: ${e.message}`;
+        }
         createCircleTexture(this, 'fireball_tex', 10, 0xff8800);  // eslint-disable-line no-undef
     }
 
@@ -111,6 +149,16 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
                 repeat,
             });
         });
+
+        // Fireball animation from the TypeGPU canvas
+        if (this.textures.exists('fireball_fancy')) {
+            this.anims.create({
+                key: 'fireball-fancy',
+                frames: this.anims.generateFrameNumbers('fireball_fancy', { start: 0, end: 15 }),
+                frameRate: 20,
+                repeat: -1
+            });
+        }
     }
 
     _buildPlayers(width, height) {
@@ -374,6 +422,12 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
         fb.body.collideWorldBounds = true;
         fb.body.onWorldBounds = true;
         fb.owner = this.myPlayer;
+
+        if (this.textures.exists('fireball_fancy')) {
+            fb.setTexture('fireball_fancy');
+            fb.play('fireball-fancy', true);
+        }
+
         return fb;
     }
 
@@ -473,6 +527,11 @@ class GameScene extends Phaser.Scene {  // eslint-disable-line no-undef
             fb.body.collideWorldBounds = true;
             fb.body.onWorldBounds = true;
             fb.owner = this.otherPlayer; // prevents hitting the sender
+
+            if (this.textures.exists('fireball_fancy')) {
+                fb.setTexture('fireball_fancy');
+                fb.play('fireball-fancy', true);
+            }
 
             const dx = data.targetX - data.x;
             const dy = data.targetY - data.y;

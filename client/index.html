@@ -20,7 +20,7 @@
 
     <!-- TypeGPU import map (used by bg-shader.js) -->
     <script type="importmap">
-        { "imports": { "typegpu": "https://unpkg.com/typegpu@latest/dist/index.js" } }
+        { "imports": { "typegpu": "https://cdn.jsdelivr.net/npm/typegpu@0.3.0/dist/index.js" } }
     </script>
 
     <!--
@@ -43,7 +43,8 @@
     <script src="scenes/MenuScene.js"></script>
     <script src="scenes/EndScene.js"></script>
     <script src="scenes/GameScene.js"></script>
-    <script src="game.js"></script>
+    <script type="module" src="spell-fx.js"></script>
+    <script type="module" src="game.js"></script>
     <script type="module" src="bg-shader.js"></script>
 </body>
 
