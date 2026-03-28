@@ -165,23 +165,12 @@ window.ARENAS = {
 
             const group = scene.physics.add.staticGroup();
 
-            // ── Fixed layout — staggered crypt ledges ─────────────────────
+            // ── Fixed layout — cleaner staggered crypt ledges ─────────────────────
             makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.22, height - 160, 220, 2.0);
             makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.78, height - 220, 220, 2.0);
-            makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.5, height - 370, 200, 2.0);
-            makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.35, height - 290, 140, 2.0);
-            makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.65, height - 310, 140, 2.0);
+            makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', width * 0.5, height - 380, 250, 2.0);
 
-            // ── Random extras (2 narrow ledges per match) ─────────────────
-            const usedX = [width * 0.22, width * 0.35, width * 0.5, width * 0.65, width * 0.78];
-            for (let i = 0; i < 2; i++) {
-                let rx;
-                do { rx = randRange(width * 0.1, width * 0.9); }
-                while (usedX.some(x => Math.abs(x - rx) < 130));
-                usedX.push(rx);
-                const ry = randRange(height - 360, height - 190);
-                makeTilePlat(scene, group, 'platformertiles', 'crypt_plat', rx, ry, 100, 2.0);
-            }
+            // Removed random extras for a cleaner arena
 
             return group;
         }
