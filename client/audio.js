@@ -57,7 +57,10 @@ let analyser;
 let microphone;
 let animationId;
 let peakVolume = 0;
-let playerSpeed = PLAYER_SPEED_NORMAL;
+
+// playerSpeed is read by game.js in handleLocalPlayerMovement()
+// Declared as var so game.js can read it as a global
+var playerSpeed = PLAYER_SPEED_NORMAL;
 
 // ─── Audio Init ───────────────────────────────────────────────────────────────
 
@@ -181,7 +184,12 @@ async function sendAudioToGemini(audioBlob, volume) {
     console.log(' backfire:', result.backfire);
     console.log('-----------------------------------------');
 
-    // TODO: pass result to Phaser casting function / Socket.io SPELL_CAST event
+    // Hand the result off to Phaser via the bridge function defined in game.js
+    if (typeof window.castSpellFromAudio === 'function') {
+      window.castSpellFromAudio(result);
+    } else {
+      console.warn('[Audio]: window.castSpellFromAudio not ready yet.');
+    }
 
   } catch (error) {
     console.error('[Gemini Request Error]:', error);
