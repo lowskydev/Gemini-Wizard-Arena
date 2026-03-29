@@ -1,4 +1,4 @@
-# Gemini Wizard Hackaton Project
+# Gemini Wizard Project
 
 Hackathon Project Developed for the **Software Mansion x Gemini Hackathon**.
 
