@@ -1,4 +1,4 @@
-# Gemini Wizard Project
+# Gemini Wizard Arena
 
 A 2-player LAN wizard duel — shout spells into your microphone, aim with your mouse, and blast your opponent off the platforms.
 
